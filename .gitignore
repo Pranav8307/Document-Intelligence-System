@@ -1,0 +1,11 @@
+/env
+/__pycache__
+/models/__pycache__
+/models/__init__.py
+/routers/__pycache__
+/routers/__init__.py
+/services/__pycache__
+/services/__init__.py
+/utils/__pycache__
+/utils/__init__.py
+.env
