@@ -4,7 +4,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from routers import document, qa
+from models.schemas import MetricsResponse
 from utils.logger import get_logger
+from utils.metrics import metrics_store
 
 logger = get_logger(__name__)
 
@@ -35,3 +37,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.get("/health")
 def health():
     return {"status": "ok", "message": "Service is running", "data": None}
+
+
+@app.get("/metrics", response_model=MetricsResponse)
+def metrics():
+    return metrics_store.snapshot()
