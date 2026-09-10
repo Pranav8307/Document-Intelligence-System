@@ -14,8 +14,8 @@ for this manual workflow.
    - Demo: keep `USE_MOCK_LLM=true`; no AI-provider key is needed.
    - Real answers: set `USE_MOCK_LLM=false`, then set provider, model, base URL,
      and the matching API key as Render secrets.
-4. Choose at least 2 GB of memory. This service loads PyTorch and a sentence
-   embedding model, so a 512 MB instance is not an appropriate production size.
+4. The API uses lightweight TF-IDF retrieval so it can run on Render's free
+   memory tier without PyTorch, CUDA, or a sentence-transformer model.
 
 ## Create the API web service
 
@@ -38,6 +38,11 @@ If the first Docker deploy fails with `AttributeError: _ARRAY_API not found`
 or `numpy.core.multiarray failed to import`, push the latest requirements file
 and redeploy. The project pins NumPy 1.26.4 because the selected FAISS version
 is not compatible with NumPy 2.x.
+
+If Render reports that the service exceeded its memory limit, make sure the
+latest Dockerfile and requirements file are deployed. The earlier image loaded
+PyTorch, CUDA libraries, and a sentence-transformer model; the current image
+uses lightweight TF-IDF retrieval instead.
 
 ## Create the frontend static site
 

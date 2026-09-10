@@ -1,39 +1,28 @@
-import numpy as np
-import faiss
 import time
-from sentence_transformers import SentenceTransformer
 from typing import List, Tuple
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from utils.logger import get_logger
 from utils.metrics import metrics_store
 
 logger = get_logger(__name__)
 
-# FAISS index store: document_id -> (faiss index, list of chunks)
+# Lightweight index store: document_id -> (vectorizer, matrix, chunks)
 _indexes: dict[str, tuple] = {}
 
 
 class EmbeddingService:
     def __init__(self):
-        logger.info("Loading embedding model (all-MiniLM-L6-v2)...")
-        self.model = SentenceTransformer("all-MiniLM-L6-v2")
-        logger.info("Embedding model loaded.")
+        logger.info("Using lightweight TF-IDF retrieval.")
 
-    def _embed(self, texts: List[str]) -> np.ndarray:
+    def index_chunks(self, document_id: str, chunks: List[str]) -> None:
         start = time.perf_counter()
-        embeddings = self.model.encode(texts, convert_to_numpy=True)
+        vectorizer = TfidfVectorizer(stop_words="english", ngram_range=(1, 2))
+        matrix = vectorizer.fit_transform(chunks)
+        _indexes[document_id] = (vectorizer, matrix, chunks)
         metrics_store.record_timing(
             "embedding_encode", (time.perf_counter() - start) * 1000
         )
-        # Normalize for cosine similarity (FAISS IndexFlatIP = dot product on unit vecs)
-        norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-        return (embeddings / norms).astype("float32")
-
-    def index_chunks(self, document_id: str, chunks: List[str]) -> None:
-        vectors = self._embed(chunks)
-        dim = vectors.shape[1]
-        index = faiss.IndexFlatIP(dim)  # inner product on normalized = cosine
-        index.add(vectors)
-        _indexes[document_id] = (index, chunks)
         logger.info(f"Indexed {len(chunks)} chunks for doc {document_id}")
 
     def retrieve_top_k(
@@ -43,26 +32,28 @@ class EmbeddingService:
         if document_id not in _indexes:
             raise KeyError(f"No index found for document_id={document_id}")
 
-        index, chunks = _indexes[document_id]
-        query_vec = self._embed([question])
+        vectorizer, matrix, chunks = _indexes[document_id]
+        encode_start = time.perf_counter()
+        query_vec = vectorizer.transform([question])
+        metrics_store.record_timing(
+            "embedding_encode", (time.perf_counter() - encode_start) * 1000
+        )
         result_count = min(top_k, len(chunks))
-        scores, indices = index.search(query_vec, result_count)
+        similarities = cosine_similarity(query_vec, matrix)[0]
+        indices = similarities.argsort()[::-1][:result_count]
 
         # Include adjacent chunks so lists and bullet points split at a chunk
         # boundary arrive together in the LLM context.
         selected_indices = set()
-        for idx in indices[0]:
-            if idx != -1:
-                selected_indices.add(int(idx))
-                if idx > 0:
-                    selected_indices.add(int(idx) - 1)
-                if idx + 1 < len(chunks):
-                    selected_indices.add(int(idx) + 1)
+        for idx in indices:
+            selected_indices.add(int(idx))
+            if idx > 0:
+                selected_indices.add(int(idx) - 1)
+            if idx + 1 < len(chunks):
+                selected_indices.add(int(idx) + 1)
 
         score_by_index = {
-            int(idx): float(score)
-            for score, idx in zip(scores[0], indices[0])
-            if idx != -1
+            int(idx): float(similarities[idx]) for idx in indices
         }
         results = [
             (chunks[idx], score_by_index.get(idx, 0.0))
