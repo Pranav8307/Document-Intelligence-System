@@ -3,8 +3,7 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     OMP_NUM_THREADS=1 \
-    MKL_NUM_THREADS=1 \
-    HF_HOME=/opt/huggingface
+    MKL_NUM_THREADS=1
 
 WORKDIR /app
 
@@ -17,7 +16,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY . .
 
 RUN useradd --create-home appuser \
-    && chown -R appuser:appuser /app /opt/huggingface
+    && chown -R appuser:appuser /app
 
 USER appuser
 
