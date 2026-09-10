@@ -1,8 +1,9 @@
 # Deploy to Render
 
 This repository deploys as a FastAPI web service and a React static site. The
-included `render.yaml` and `Dockerfile` build the embedding model into the API
-image and build the frontend from `frontend/`.
+included `Dockerfile` builds the embedding model into the API image. Deploy the
+API and frontend as two separate Render services; `render.yaml` is not needed
+for this manual workflow.
 
 ## Before deploying
 
@@ -16,19 +17,59 @@ image and build the frontend from `frontend/`.
 4. Choose at least 2 GB of memory. This service loads PyTorch and a sentence
    embedding model, so a 512 MB instance is not an appropriate production size.
 
-## Create the Render service
+## Create the API web service
 
-1. In the Render dashboard, select **New** then **Blueprint**.
-2. Select the GitHub repository and branch.
-3. Render finds `render.yaml`. Confirm the service name and select the region
-   closest to most users.
-4. Pick a compute plan with at least 2 GB RAM.
-5. Create the Blueprint and watch the first deploy log. The Docker build
-   downloads the embedding model once; subsequent starts use the image copy.
-6. When Render marks the deploy live, open:
-   - `https://<your-service>.onrender.com/health`
-   - `https://<your-service>.onrender.com/docs`
-   - `https://document-intelligence-web.onrender.com`
+1. In Render, select **New -> Web Service**.
+2. Connect the GitHub repository and select the `main` branch.
+3. Set the service name to `document-intelligence-api`.
+4. Set **Language/Runtime** to **Docker**.
+5. Set Dockerfile path to `./Dockerfile`.
+6. Choose the Free plan if available. The API may need more memory because it
+   loads PyTorch, FAISS, and SentenceTransformers.
+7. Add health check path `/health`.
+8. Create the service and wait for the Docker build to finish.
+
+After deployment, copy the API URL and verify:
+
+- `https://<api-service>.onrender.com/health`
+- `https://<api-service>.onrender.com/docs`
+
+If the first Docker deploy fails with `AttributeError: _ARRAY_API not found`
+or `numpy.core.multiarray failed to import`, push the latest requirements file
+and redeploy. The project pins NumPy 1.26.4 because the selected FAISS version
+is not compatible with NumPy 2.x.
+
+## Create the frontend static site
+
+1. In Render, select **New -> Static Site**.
+2. Select the same GitHub repository and `main` branch.
+3. Set the site name to `document-intelligence-web`.
+4. Set **Root Directory** to `frontend`.
+5. Set build command to `npm install && npm run build`.
+6. Set publish directory to `dist`.
+7. Add this environment variable, replacing the value with your actual API URL:
+
+```text
+VITE_API_URL=https://<api-service>.onrender.com
+```
+
+8. Choose the Free plan and create the site.
+
+The frontend URL will look like:
+
+```text
+https://<frontend-service>.onrender.com
+```
+
+## Connect the two services
+
+Open the API service's **Environment** settings and add:
+
+```text
+FRONTEND_ORIGINS=https://<frontend-service>.onrender.com
+```
+
+Save and redeploy the API. Then open the frontend URL and test upload and Q&A.
 
 The frontend is optional: FastAPI Swagger at `/docs` remains available for
 developer testing. The React site is the normal user interface.
@@ -38,8 +79,8 @@ TypeScript files or TypeScript build steps.
 
 ## Updating the hosted app
 
-Render is configured with `autoDeploy: true` for both the API and frontend.
-After changing code:
+Enable **Auto-Deploy: Yes** in each separate Render service. After changing
+code:
 
 1. Run the local checks below.
 2. Commit and push to the branch connected to Render, usually `main`.
