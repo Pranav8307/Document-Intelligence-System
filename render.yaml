@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: document-intelligence-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: USE_MOCK_LLM
+        value: "true"
+      - key: FRONTEND_ORIGINS
+        value: "https://document-intelligence-web.onrender.com,http://localhost:5173,http://127.0.0.1:5173"
+  - type: web
+    name: document-intelligence-web
+    runtime: static
+    autoDeploy: true
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/dist
+    rootDir: .
+    envVars:
+      - key: VITE_API_URL
+        value: https://document-intelligence-api.onrender.com

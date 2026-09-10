@@ -1,7 +1,9 @@
+import time
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from models.schemas import APIResponse, UploadResponse
 from services.document_service import process_and_store_document
 from utils.logger import get_logger
+from utils.metrics import metrics_store
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -12,6 +14,8 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 @router.post("/upload", response_model=APIResponse)
 async def upload_document(file: UploadFile = File(...)):
+    request_start = time.perf_counter()
+
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(
             status_code=415,
@@ -33,7 +37,11 @@ async def upload_document(file: UploadFile = File(...)):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    logger.info(f"Upload success: {file.filename} → {document_id}")
+    logger.info("Upload success: %s -> %s", file.filename, document_id)
+    metrics_store.increment("upload_requests")
+    metrics_store.record_timing(
+        "upload_request_total", (time.perf_counter() - request_start) * 1000
+    )
 
     return APIResponse(
         status="success",

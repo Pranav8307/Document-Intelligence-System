@@ -1,8 +1,10 @@
 import io
+import time
 import uuid
 from typing import List
 import fitz  # PyMuPDF
 from utils.logger import get_logger
+from utils.metrics import metrics_store
 from services.embedding_service import EmbeddingService
 
 logger = get_logger(__name__)
@@ -47,22 +49,40 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]
 def process_and_store_document(
     file_bytes: bytes, filename: str
 ) -> tuple[str, int]:
+    total_start = time.perf_counter()
     document_id = str(uuid.uuid4())
     logger.info(f"Processing document: {filename} | id={document_id}")
 
+    extract_start = time.perf_counter()
     if filename.lower().endswith(".pdf"):
         text = extract_text_from_pdf(file_bytes)
     else:
         text = extract_text_from_txt(file_bytes)
+    metrics_store.record_timing(
+        "document_extract", (time.perf_counter() - extract_start) * 1000
+    )
 
     if not text:
         raise ValueError("Document appears to be empty or unreadable.")
 
+    chunk_start = time.perf_counter()
     chunks = chunk_text(text)
+    metrics_store.record_timing(
+        "document_chunk", (time.perf_counter() - chunk_start) * 1000
+    )
     logger.info(f"Chunked into {len(chunks)} chunks | id={document_id}")
 
     _document_store[document_id] = chunks
+    index_start = time.perf_counter()
     embedding_service.index_chunks(document_id, chunks)
+    metrics_store.record_timing(
+        "document_index", (time.perf_counter() - index_start) * 1000
+    )
+    metrics_store.increment("documents_processed")
+    metrics_store.increment("chunks_indexed_total", len(chunks))
+    metrics_store.record_timing(
+        "document_process_total", (time.perf_counter() - total_start) * 1000
+    )
 
     return document_id, len(chunks)
 

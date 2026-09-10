@@ -9,3 +9,11 @@
 /utils/__pycache__
 /utils/__init__.py
 .env
+/pytest_cache
+/.pytest_cache
+**/__pycache__/
+*.pyc
+*.log
+sample_resume_metrics.txt
+/frontend/node_modules
+/frontend/dist

@@ -1,0 +1,9 @@
+.git
+.env
+env
+__pycache__
+*.py[cod]
+*.log
+benchmark_data_*
+benchmarks
+sample_resume_metrics.txt

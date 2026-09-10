@@ -1,21 +1,42 @@
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+
+load_dotenv()
+
 from routers import document, qa
 from models.schemas import MetricsResponse
 from utils.logger import get_logger
 from utils.metrics import metrics_store
+from utils.rate_limiter import limiter
 
 logger = get_logger(__name__)
-
-limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="Document Q&A API",
     description="Upload documents and ask questions using LLM-powered retrieval.",
     version="1.0.0",
+)
+
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 app.state.limiter = limiter
