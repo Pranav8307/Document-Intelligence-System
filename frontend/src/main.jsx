@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
+import ReactMarkdown from "react-markdown";
 import "./styles.css";
 
 const API_URL = (import.meta.env.VITE_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -62,7 +63,7 @@ function App() {
       const payload = await apiRequest("/qa/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document_id: document.document_id, question, top_k: 5 }),
+        body: JSON.stringify({ document_id: document.document_id, question, top_k: 50 }),
       });
       setAnswer(payload.data);
       await refreshMetrics(setMetrics);
@@ -103,7 +104,7 @@ function App() {
             </label>
             <button className="primary-button" type="submit" disabled={!file || busy}>{busy ? "Indexing..." : "Upload and index"}<span>→</span></button>
           </form>
-          {document && <div className="document-chip"><span className="file-icon">TXT</span><div><strong>{document.filename}</strong><small>{document.chunk_count} chunks indexed</small></div><span className="check">✓</span></div>}
+          {document && <div className="document-chip"><span className="file-icon">TXT</span><div><strong>{document.filename}</strong><small>{document.chunk_count} chunks indexed; full document available</small></div><span className="check">✓</span></div>}
         </div>
 
         <div className="panel question-panel">
@@ -112,9 +113,17 @@ function App() {
             <textarea value={question} onChange={(event) => setQuestion(event.target.value)} disabled={!document || busy} placeholder="What would you like to understand?" rows="5" />
             <button className="primary-button" type="submit" disabled={!document || !question.trim() || busy}>{busy ? "Thinking..." : "Get an answer"}<span>↗</span></button>
           </form>
-          {answer && <article className="answer"><div className="answer-label"><span>Answer</span>{answer.cached && <small>Cached</small>}</div><p>{answer.answer}</p><footer>{answer.chunks_used} source chunks used</footer></article>}
         </div>
       </section>
+
+      {answer && <section className="answer-panel">
+        <div className="answer-heading">
+          <div><p className="eyebrow">Document response</p><h2>Answer</h2></div>
+          <div className="answer-meta">{answer.cached && <span>Cached</span>}<span>{answer.chunks_used} source chunks</span></div>
+        </div>
+        <div className="answer-content"><ReactMarkdown>{answer.answer}</ReactMarkdown></div>
+        <footer className="answer-footer">Full document context used</footer>
+      </section>}
 
       <section className="bottom-row">
         <div><p className="eyebrow">System pulse</p><h2>Built for a clear first pass.</h2></div>
