@@ -26,6 +26,7 @@ function App() {
   const [file, setFile] = useState(null);
   const [document, setDocument] = useState(null);
   const [question, setQuestion] = useState("");
+  const [answerLength, setAnswerLength] = useState("detailed");
   const [answer, setAnswer] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -63,7 +64,7 @@ function App() {
       const payload = await apiRequest("/qa/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ document_id: document.document_id, question, top_k: 50 }),
+        body: JSON.stringify({ document_id: document.document_id, question, answer_length: answerLength }),
       });
       setAnswer(payload.data);
       await refreshMetrics(setMetrics);
@@ -111,6 +112,11 @@ function App() {
           <div className="panel-heading"><span className="step">02</span><div><h2>Ask a question</h2><p>{document ? "Your document is ready" : "Upload a document first"}</p></div></div>
           <form onSubmit={askQuestion} className="question-form">
             <textarea value={question} onChange={(event) => setQuestion(event.target.value)} disabled={!document || busy} placeholder="What would you like to understand?" rows="5" />
+            <div className="answer-options" role="group" aria-label="Answer length">
+              <span>Answer length</span>
+              <button type="button" className={answerLength === "concise" ? "selected" : ""} onClick={() => setAnswerLength("concise")} disabled={busy}>Concise</button>
+              <button type="button" className={answerLength === "detailed" ? "selected" : ""} onClick={() => setAnswerLength("detailed")} disabled={busy}>Detailed</button>
+            </div>
             <button className="primary-button" type="submit" disabled={!document || !question.trim() || busy}>{busy ? "Thinking..." : "Get an answer"}<span>↗</span></button>
           </form>
         </div>

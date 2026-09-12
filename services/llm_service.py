@@ -21,13 +21,20 @@ def _get_api_key(provider: str) -> str | None:
     return os.getenv("OPENAI_API_KEY")
 
 
-def _build_prompt(question: str, chunks: List[Tuple[str, float]]) -> str:
+def _build_prompt(
+    question: str, chunks: List[Tuple[str, float]], answer_length: str
+) -> str:
     """
     The caller may provide the complete document for broad questions such as
     "list all projects". Keeping the context ordered by document position
     helps the model preserve headings, lists, and details split across chunks.
     """
     context = "\n\n---\n\n".join([chunk for chunk, _ in chunks])
+    length_instruction = (
+        "Give a focused answer in 3-6 bullets or short paragraphs."
+        if answer_length == "concise"
+        else "Give a thorough answer with complete sections and all relevant details."
+    )
     return f"""You are a document-grounded resume assistant. Answer using ONLY the context below.
 If the answer is not in the context, say "I don't have enough information to answer that."
 
@@ -39,8 +46,7 @@ For broad questions about projects, work experience, education, skills, or achie
 - Preserve technical names and numbers exactly as written in the document.
 - If a detail is not provided, omit it rather than guessing.
 
-Write a thorough, well-structured answer. Do not provide a short summary when the
-question asks for full information. Do not stop mid-sentence or invent details.
+{length_instruction} Do not stop mid-sentence or invent details.
 
 Context:
 {context}
@@ -50,9 +56,11 @@ Question: {question}
 Answer:"""
 
 
-def get_answer(question: str, chunks: List[Tuple[str, float]]) -> str:
+def get_answer(
+    question: str, chunks: List[Tuple[str, float]], answer_length: str = "detailed"
+) -> str:
     start = time.perf_counter()
-    prompt = _build_prompt(question, chunks)
+    prompt = _build_prompt(question, chunks, answer_length)
     use_mock, _, _, _ = _get_config()
 
     if use_mock:
@@ -63,7 +71,7 @@ def get_answer(question: str, chunks: List[Tuple[str, float]]) -> str:
         )
         return answer
 
-    answer = _call_openai(prompt)
+    answer = _call_openai(prompt, answer_length)
     metrics_store.record_timing(
         "llm_answer_generation", (time.perf_counter() - start) * 1000
     )
@@ -79,7 +87,7 @@ def _mock_llm(question: str, chunks: List[Tuple[str, float]]) -> str:
     )
 
 
-def _call_openai(prompt: str) -> str:
+def _call_openai(prompt: str, answer_length: str = "detailed") -> str:
     _, provider, model, base_url = _get_config()
     api_key = _get_api_key(provider)
     if not api_key:
@@ -96,7 +104,7 @@ def _call_openai(prompt: str) -> str:
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=2000,
+        max_tokens=800 if answer_length == "concise" else 4000,
         temperature=0.2,
     )
     content = response.choices[0].message.content

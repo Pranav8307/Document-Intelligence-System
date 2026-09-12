@@ -24,7 +24,11 @@ async def ask_question(request: Request, body: AskRequest):
             detail=f"Document '{body.document_id}' not found. Upload it first.",
         )
 
-    cache_key = make_cache_key(body.document_id, f"v3-full-context:{body.question}")
+    retrieval_limit = body.top_k or (50 if body.answer_length == "detailed" else 8)
+    cache_key = make_cache_key(
+        body.document_id,
+        f"v4-{body.answer_length}-{retrieval_limit}:{body.question}",
+    )
     cached = cache_get(cache_key)
 
     if cached:
@@ -48,7 +52,7 @@ async def ask_question(request: Request, body: AskRequest):
 
     try:
         chunks = embedding_service.retrieve_top_k(
-            body.document_id, body.question, top_k=body.top_k
+            body.document_id, body.question, top_k=retrieval_limit
         )
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -61,7 +65,7 @@ async def ask_question(request: Request, body: AskRequest):
     )
 
     try:
-        answer = get_answer(body.question, chunks)
+        answer = get_answer(body.question, chunks, body.answer_length)
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     cache_set(cache_key, answer)

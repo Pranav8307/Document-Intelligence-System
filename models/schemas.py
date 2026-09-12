@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 
 class APIResponse(BaseModel):
@@ -17,11 +17,14 @@ class UploadResponse(BaseModel):
 class AskRequest(BaseModel):
     document_id: str = Field(..., description="ID returned from /upload")
     question: str = Field(..., min_length=3, max_length=500)
-    top_k: int = Field(
-        default=50,
+    answer_length: Literal["concise", "detailed"] = Field(
+        default="detailed", description="Controls context size and answer length"
+    )
+    top_k: int | None = Field(
+        default=None,
         ge=1,
         le=50,
-        description="Maximum number of relevant chunks to include as context",
+        description="Optional retrieval limit; detailed mode uses the full document by default",
     )
 
 

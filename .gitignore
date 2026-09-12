@@ -1,19 +1,24 @@
-/env
-/__pycache__
-/models/__pycache__
-/models/__init__.py
-/routers/__pycache__
-/routers/__init__.py
-/services/__pycache__
-/services/__init__.py
-/utils/__pycache__
-/utils/__init__.py
+# Environment and secrets
 .env
-/pytest_cache
-/.pytest_cache
+.env.*
+!.env.example
+
+# Python environments, caches, and test output
+/env/
+/.venv/
 **/__pycache__/
-*.pyc
+*.py[cod]
 *.log
+/.pytest_cache/
+/htmlcov/
+.coverage
+.coverage.*
+*.egg-info/
+
+# Frontend dependencies and build output
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+
+# Local benchmark/sample output
 sample_resume_metrics.txt
-/frontend/node_modules
-/frontend/dist
