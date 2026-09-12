@@ -8,7 +8,7 @@ from utils.metrics import metrics_store
 logger = get_logger(__name__)
 
 def _get_config() -> tuple[bool, str, str, str | None]:
-    use_mock = os.getenv("USE_MOCK_LLM", "true").lower() == "true"
+    use_mock = os.getenv("USE_MOCK_LLM", "false").lower() == "true"
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
     model = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
     base_url = os.getenv("LLM_BASE_URL")
@@ -23,18 +23,24 @@ def _get_api_key(provider: str) -> str | None:
 
 def _build_prompt(question: str, chunks: List[Tuple[str, float]]) -> str:
     """
-    Token optimization strategy:
-    - Only the top-k most relevant chunks are sent (not the full doc)
-    - Each chunk is ≈125 tokens → top-3 = ~375 context tokens
-    - System prompt is kept short and instructional
-    - Nearby chunks are included so split lists remain readable
-    - Answer is capped at max_tokens=600 to prevent mid-sentence truncation
+    The caller may provide the complete document for broad questions such as
+    "list all projects". Keeping the context ordered by document position
+    helps the model preserve headings, lists, and details split across chunks.
     """
     context = "\n\n---\n\n".join([chunk for chunk, _ in chunks])
-    return f"""You are a helpful assistant. Answer the question using ONLY the context below.
+    return f"""You are a document-grounded resume assistant. Answer using ONLY the context below.
 If the answer is not in the context, say "I don't have enough information to answer that."
-Give a complete answer. Include all relevant items when the question asks for a list.
-Do not stop mid-sentence or invent details.
+
+For broad questions about projects, work experience, education, skills, or achievements:
+- Include EVERY matching item found in the context.
+- Give each item its own heading or numbered section.
+- Include all available details for each item, including the description, responsibilities,
+  technologies, methods, metrics, and outcomes. Do not reduce an item to its title.
+- Preserve technical names and numbers exactly as written in the document.
+- If a detail is not provided, omit it rather than guessing.
+
+Write a thorough, well-structured answer. Do not provide a short summary when the
+question asks for full information. Do not stop mid-sentence or invent details.
 
 Context:
 {context}
@@ -90,7 +96,7 @@ def _call_openai(prompt: str) -> str:
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=600,
+        max_tokens=2000,
         temperature=0.2,
     )
     content = response.choices[0].message.content

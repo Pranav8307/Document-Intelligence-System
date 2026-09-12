@@ -17,7 +17,12 @@ class UploadResponse(BaseModel):
 class AskRequest(BaseModel):
     document_id: str = Field(..., description="ID returned from /upload")
     question: str = Field(..., min_length=3, max_length=500)
-    top_k: int = Field(default=5, ge=1, le=10)
+    top_k: int = Field(
+        default=50,
+        ge=1,
+        le=50,
+        description="Maximum number of relevant chunks to include as context",
+    )
 
 
 class AskResponse(BaseModel):

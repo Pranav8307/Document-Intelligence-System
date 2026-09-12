@@ -24,7 +24,7 @@ async def ask_question(request: Request, body: AskRequest):
             detail=f"Document '{body.document_id}' not found. Upload it first.",
         )
 
-    cache_key = make_cache_key(body.document_id, f"v2:{body.question}")
+    cache_key = make_cache_key(body.document_id, f"v3-full-context:{body.question}")
     cached = cache_get(cache_key)
 
     if cached:
