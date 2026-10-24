@@ -4,6 +4,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from utils.logger import get_logger
 from utils.metrics import metrics_store
+from services.database import load_all_documents
 
 logger = get_logger(__name__)
 
@@ -14,6 +15,11 @@ _indexes: dict[str, tuple] = {}
 class EmbeddingService:
     def __init__(self):
         logger.info("Using lightweight TF-IDF retrieval.")
+        restored_documents = load_all_documents()
+        for document_id, chunks in restored_documents:
+            self.index_chunks(document_id, chunks)
+        if restored_documents:
+            logger.info("Restored %d document indexes from the database.", len(restored_documents))
 
     def index_chunks(self, document_id: str, chunks: List[str]) -> None:
         start = time.perf_counter()

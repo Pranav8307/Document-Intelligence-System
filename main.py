@@ -9,6 +9,10 @@ from slowapi.errors import RateLimitExceeded
 
 load_dotenv()
 
+from services.database import init_database
+
+init_database()
+
 from routers import document, qa
 from models.schemas import MetricsResponse
 from utils.logger import get_logger

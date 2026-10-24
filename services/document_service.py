@@ -6,6 +6,7 @@ import fitz  # PyMuPDF
 from utils.logger import get_logger
 from utils.metrics import metrics_store
 from services.embedding_service import EmbeddingService
+from services.database import save_document, document_exists as database_document_exists
 
 logger = get_logger(__name__)
 
@@ -73,6 +74,7 @@ def process_and_store_document(
     logger.info(f"Chunked into {len(chunks)} chunks | id={document_id}")
 
     _document_store[document_id] = chunks
+    save_document(document_id, filename, chunks)
     index_start = time.perf_counter()
     embedding_service.index_chunks(document_id, chunks)
     metrics_store.record_timing(
@@ -88,4 +90,4 @@ def process_and_store_document(
 
 
 def document_exists(document_id: str) -> bool:
-    return document_id in _document_store
+    return document_id in _document_store or database_document_exists(document_id)

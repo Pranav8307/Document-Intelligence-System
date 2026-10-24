@@ -19,6 +19,7 @@
 /frontend/node_modules/
 /frontend/dist/
 /frontend/.vite/
+*.db
 
 # Local benchmark/sample output
 sample_resume_metrics.txt
