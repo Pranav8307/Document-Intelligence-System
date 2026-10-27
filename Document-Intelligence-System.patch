@@ -1,0 +1,460 @@
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..bf459cb
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,9 @@
++# Copy to .env and edit. Never commit .env.
++USE_MOCK_LLM=true
++LLM_PROVIDER=groq
++LLM_MODEL=openai/gpt-oss-20b
++LLM_BASE_URL=https://api.groq.com/openai/v1
++GROQ_API_KEY=
++# Optional: PostgreSQL URL for persistence
++# DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/document_intelligence
++FRONTEND_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+diff --git a/DEPLOY_RENDER.md b/DEPLOY_RENDER.md
+index bd2dd2e..1161ea2 100644
+--- a/DEPLOY_RENDER.md
++++ b/DEPLOY_RENDER.md
+@@ -1,9 +1,9 @@
+ # Deploy to Render
+ 
+ This repository deploys as a FastAPI web service and a React static site. The
+-included `Dockerfile` builds the embedding model into the API image. Deploy the
+-API and frontend as two separate Render services; `render.yaml` is not needed
+-for this manual workflow.
++`Dockerfile` installs the API with lightweight TF-IDF retrieval (no PyTorch or
++embedding model). The included `render.yaml` can create both services and a free
++PostgreSQL database; the manual steps below achieve the same result.
+ 
+ ## Before deploying
+ 
+@@ -24,8 +24,8 @@ for this manual workflow.
+ 3. Set the service name to `document-intelligence-api`.
+ 4. Set **Language/Runtime** to **Docker**.
+ 5. Set Dockerfile path to `./Dockerfile`.
+-6. Choose the Free plan if available. The API may need more memory because it
+-   loads PyTorch, FAISS, and SentenceTransformers.
++6. Choose the Free plan. The API fits the free memory tier because it uses
++   TF-IDF retrieval instead of PyTorch or SentenceTransformers.
+ 7. Add health check path `/health`.
+ 8. Create the service and wait for the Docker build to finish.
+ 
+@@ -34,15 +34,14 @@ After deployment, copy the API URL and verify:
+ - `https://<api-service>.onrender.com/health`
+ - `https://<api-service>.onrender.com/docs`
+ 
+-If the first Docker deploy fails with `AttributeError: _ARRAY_API not found`
+-or `numpy.core.multiarray failed to import`, push the latest requirements file
+-and redeploy. The project pins NumPy 1.26.4 because the selected FAISS version
+-is not compatible with NumPy 2.x.
++History: the first deployed version used SentenceTransformers + FAISS. On the
++free tier it failed with a FAISS/NumPy compatibility error and then exceeded the
++memory limit (PyTorch + CUDA libraries), so retrieval was switched to TF-IDF on
++10 Sep 2026. If you see `numpy.core.multiarray failed to import`, check that
++`numpy==1.26.4` from `requirements.txt` is the version installed.
+ 
+-If Render reports that the service exceeded its memory limit, make sure the
+-latest Dockerfile and requirements file are deployed. The earlier image loaded
+-PyTorch, CUDA libraries, and a sentence-transformer model; the current image
+-uses lightweight TF-IDF retrieval instead.
++If Render reports that the service exceeded its memory limit, confirm the latest
++Dockerfile and `requirements.txt` are deployed.
+ 
+ ## Create the frontend static site
+ 
+@@ -103,7 +102,7 @@ Set these in the service's **Environment** tab. Mark API keys as secrets.
+ | Variable | Example value |
+ | --- | --- |
+ | `USE_MOCK_LLM` | `false` |
+-| `LLM_PROVIDER` | `openai` or `groq` |
++| `LLM_PROVIDER` | `groq` (as deployed) or `openai` |
+ | `LLM_MODEL` | the model name from your AI provider |
+ | `LLM_BASE_URL` | provider API base URL when required |
+ | `OPENAI_API_KEY` | your OpenAI key when `LLM_PROVIDER=openai` |
+@@ -135,10 +134,14 @@ Open `http://localhost:5173`. It uses `http://127.0.0.1:8000` by default. To
+ use another API, create `frontend/.env.local` with
+ `VITE_API_URL=https://your-api.onrender.com`.
+ 
+-## Important current limitation
++## Persistence and limitations
+ 
+-Documents, vectors, cached answers, and metrics are stored only in the running
+-process. They disappear when the service restarts, redeploys, or scales beyond
+-one instance. This is suitable for a single-instance demo, not durable product
+-storage. A production version needs persistent object storage for uploaded files
+-and a database/vector store for document text, embeddings, and cache data.
++If `DATABASE_URL` is set (the included `render.yaml` wires a Render PostgreSQL
++database), uploaded documents and chunks are stored in PostgreSQL and the TF-IDF
++indexes are rebuilt from them on startup. Without `DATABASE_URL`, everything is
++kept in process memory and disappears on restart.
++
++Always in memory (reset on restart, not shared across instances): the answer
++cache (5 minutes), the rate limiter, and the `/metrics` counters. There is no
++authentication or per-user isolation. This is suitable for a single-instance
++demo, not for sensitive documents.
+diff --git a/README.md b/README.md
+index 61c4bd7..ea7f537 100644
+--- a/README.md
++++ b/README.md
+@@ -1,100 +1,151 @@
+ # Document Intelligence System
+ 
+-A production-style document Q&A API. Upload a PDF or text file, ask questions in natural language, and get answers grounded in the document content — not hallucinated from model weights.
++A document Q&A API with a small React frontend. Upload a PDF or text file, ask questions in plain English, and get answers that are generated only from the retrieved parts of that document.
+ 
+-Built to explore what a real RAG pipeline looks like beyond the toy tutorial version: proper chunking, vector indexing, caching, rate limiting, and a fallback mock LLM mode that runs without any API keys.
++I built it to understand how a RAG (retrieval-augmented generation) pipeline works end to end: chunking, retrieval, grounded prompting, caching, rate limiting, metrics, and deployment. It is a learning project, not a production product.
++
++**Live demo:** https://document-intelligence-system-29xr.onrender.com/ (Render free tier: the first request after idle can take about a minute to wake up.)
+ 
+ ---
+ 
+ ## How it works
+ 
+-1. Upload a document (PDF or plain text)
+-2. The system chunks the text, generates sentence embeddings, and indexes them in FAISS
+-3. On query, the top-k most relevant chunks are retrieved by cosine similarity
+-4. Those chunks are passed as context to the LLM, which answers based only on what's in the document
+-5. Results are cached with TTL to avoid redundant embedding calls
++1. **Upload** a PDF or TXT file (max 10 MB). Text is extracted with PyMuPDF.
++2. **Chunk** the text into 500-character pieces with 50 characters of overlap, so a sentence cut at a boundary still appears whole in the neighbouring chunk.
++3. **Index** the chunks with TF-IDF (scikit-learn, unigrams + bigrams, English stop words).
++4. **Retrieve** the best-matching chunks for a question by cosine similarity, plus each match's two neighbouring chunks.
++5. **Generate** an answer with an LLM (Groq in the deployed version), with a prompt that tells the model to answer only from the retrieved context and to say so when the answer is not there.
++6. **Cache** the answer for 5 minutes (in memory), so a repeated question skips retrieval and the LLM call.
++
++### Answer modes
++
++| Mode | Retrieval limit | Output |
++|---|---|---|
++| `detailed` (default) | up to 50 chunks | thorough answer. For small documents this is effectively the whole document |
++| `concise` | 8 chunks | 3 to 6 bullets or short paragraphs |
++
++`top_k` (1 to 50) overrides the limit. Be aware that in `detailed` mode retrieval does little filtering on small files; it matters most for long documents and for `concise` mode.
+ 
+ ---
+ 
+-## Features
++## Why TF-IDF and not embeddings + FAISS?
+ 
+-- **RAG pipeline** — SentenceTransformers for embeddings, FAISS for vector retrieval
+-- **FastAPI backend** — clean REST endpoints, Pydantic models, proper error handling
+-- **TTL caching** — repeated queries on the same document don't re-embed
+-- **Rate limiting** — basic per-IP throttling on the query endpoint
+-- **Mock LLM mode** — runs without OpenAI keys, returns retrieved chunks directly (useful for testing retrieval quality independently)
+-- **Structured project layout** — models, routers, services, utils separated cleanly
++The first version (March to September 2026) used SentenceTransformers (`all-MiniLM-L6-v2`) with a FAISS `IndexFlatIP` index on normalized vectors. When I deployed to Render's free tier, the image failed on a FAISS/NumPy compatibility error and then ran out of memory because of PyTorch. On 10 September 2026 I switched retrieval to TF-IDF so the service fits the free tier. The full history is in the git log.
++
++Trade-off:
++
++- TF-IDF matches **words**, not **meaning**. It misses paraphrases such as "forgot my login" vs "reset password".
++- It is tiny, fast, needs no model download, and is easy to debug.
++- For larger deployments I would go back to embeddings, plus keyword search (BM25) and a reranker.
++
++`benchmarks/run_benchmarks.py` is a legacy script from the FAISS version (see "Benchmarks" below).
+ 
+ ---
+ 
+-## Stack
++## API
+ 
+-| Layer | Technology |
+-|---|---|
+-| API Framework | FastAPI + Uvicorn |
+-| Embeddings | SentenceTransformers (all-MiniLM-L6-v2) |
+-| Vector Search | FAISS |
+-| LLM Integration | OpenAI API (optional) |
+-| Language | Python 3.10+ |
++| Method | Endpoint | Description |
++|---|---|---|
++| GET | `/health` | Health check |
++| GET | `/metrics` | Counters and timings (retrieval, indexing, LLM, total request) |
++| POST | `/documents/upload` | Upload a PDF/TXT file. Returns `document_id` and `chunk_count` |
++| POST | `/qa/ask` | Body: `document_id`, `question`, optional `answer_length`, `top_k` |
++
++Interactive docs: `/docs`.
++
++Limits: PDF or TXT only, 10 MB max, `/qa/ask` is rate limited to 10 requests per minute per IP (slowapi). Requests are validated with Pydantic.
+ 
+ ---
+ 
+-## Project structure
++## Stack
+ 
+-Document-Intelligence-System/
+-├── routers/        # FastAPI route handlers
+-├── services/       # Core logic: chunking, embedding, retrieval
+-├── models/         # Pydantic schemas
+-├── utils/          # Helpers: caching, rate limiting
+-├── main.py         # App entry point
+-└── requirements.txt
++| Layer | Technology |
++|---|---|
++| API | FastAPI, Uvicorn, Pydantic |
++| Retrieval | scikit-learn TF-IDF + cosine similarity |
++| PDF parsing | PyMuPDF |
++| LLM | Groq through the OpenAI-compatible SDK (model set by env var); mock mode for local runs |
++| Storage | In-memory indexes. Optional PostgreSQL (SQLAlchemy) keeps documents and chunks, and indexes are rebuilt from it on startup |
++| Frontend | React + Vite |
++| Deploy | Docker, Render |
+ 
+ ---
+ 
+-## Setup
++## Run locally
+ 
+ ```bash
+ git clone https://github.com/Pranav8307/Document-Intelligence-System.git
+ cd Document-Intelligence-System
+-
+ python -m venv venv
+-source venv/bin/activate  # Windows: venv\Scripts\activate
+-
++source venv/bin/activate        # Windows: venv\Scripts\activate
+ pip install -r requirements.txt
++cp .env.example .env            # then edit it
++uvicorn main:app --reload
+ ```
+ 
+-Create a `.env` file:
+-OPENAI_API_KEY=your_key_here   # Optional — omit to use mock LLM mode
++Open http://127.0.0.1:8000/docs.
++
++**No API key?** Keep `USE_MOCK_LLM=true` in `.env`. The mock returns an excerpt of a retrieved chunk labelled `[MOCK ANSWER]`. It lets you exercise upload, chunking, retrieval, caching and the API without calling a model. It does **not** measure retrieval accuracy, because it returns an excerpt of the first retrieved chunk in document order, not the best-scoring one.
++
++**Frontend:**
+ 
+-Run the server:
+ ```bash
+-uvicorn main:app --reload
++cd frontend
++npm install
++npm run dev     # http://localhost:5173
+ ```
+ 
+-API docs available at `http://localhost:8000/docs`
++### Environment variables
++
++| Variable | Purpose |
++|---|---|
++| `USE_MOCK_LLM` | `true` to skip the LLM |
++| `LLM_PROVIDER` | `groq` or `openai` |
++| `LLM_MODEL` | model name from the provider |
++| `LLM_BASE_URL` | provider base URL (Groq: `https://api.groq.com/openai/v1`) |
++| `GROQ_API_KEY` / `OPENAI_API_KEY` | key for the chosen provider |
++| `DATABASE_URL` | optional PostgreSQL URL for persistence |
++| `FRONTEND_ORIGINS` | comma-separated allowed CORS origins |
++
++Deployment steps for Render are in `DEPLOY_RENDER.md`.
+ 
+ ---
+ 
+-## API endpoints
++## Tests
+ 
+-| Method | Endpoint | Description |
+-|---|---|---|
+-| POST | `/upload` | Upload and index a document |
+-| POST | `/query` | Ask a question against the indexed document |
+-| GET | `/health` | Health check |
++```bash
++pip install pytest
++pytest -q
++```
++
++The tests cover chunking, retrieval ranking, cache expiry, and the upload/ask flow in mock mode.
+ 
+ ---
+ 
+-## Design decisions worth noting
++## Benchmarks (legacy)
+ 
+-**Why mock LLM mode?** Separates retrieval quality from generation quality. You can test whether your chunking and vector search are finding the right passages before ever touching an LLM API.
++On the earlier FAISS version, in a local run in early April 2026 against 12 small synthetic documents, I measured about **94 ms retrieval** (which included encoding the question) and about **1.69 s end to end** (dominated by the LLM call). These numbers describe the old architecture, a tiny corpus, and a single machine. I have not re-measured them on the current TF-IDF version.
+ 
+-**Why TTL cache on embeddings?** Embedding a multi-page document on every query would be slow and expensive. Cache the index, invalidate when the document changes.
++The best current numbers are your own: call `/metrics` after some real questions, and look at `retrieval_search` and `qa_request_total`.
+ 
+-**Why FAISS over a managed vector DB?** For a project at this scale, FAISS runs in-process, has no infrastructure cost, and is what ships in production at many companies before they hit scale limits.
++To run the legacy script you need the extra packages in `requirements-bench.txt`.
+ 
+ ---
+ 
+-## Author
++## Known limitations
++
++- TF-IDF cannot match synonyms or paraphrases.
++- Fixed-size character chunking can split sentences and tables; scanned PDFs have no text layer and are not supported (no OCR).
++- The answer cache and rate limiter are in memory, so they reset on restart and do not work across multiple instances.
++- No authentication or per-user document isolation: anyone with a `document_id` can query it.
++- There is no retrieval evaluation set yet; quality has only been checked by hand.
++
++## What I would do next
++
++1. Build a small question/answer evaluation set and measure recall@k.
++2. Add embeddings + BM25 hybrid search and a reranker, compared against this baseline.
++3. Move the cache and rate limiter to Redis; add per-user access control.
++
++---
+ 
+-Pranav · [LinkedIn](https://linkedin.com/in/pranav2602) · pranav260205@gmail.com
++Pranav, [LinkedIn](https://linkedin.com/in/pranav2602), pranav260205@gmail.com
+diff --git a/benchmarks/run_benchmarks.py b/benchmarks/run_benchmarks.py
+index 67007a3..d9fe4ec 100644
+--- a/benchmarks/run_benchmarks.py
++++ b/benchmarks/run_benchmarks.py
+@@ -1,3 +1,14 @@
++"""
++LEGACY benchmark from the SentenceTransformers + FAISS version of this project.
++
++The deployed app now uses TF-IDF retrieval (see README, "Why TF-IDF"). This
++script still compares FAISS IndexFlatIP with NumPy brute force, and times the
++upload / first-ask / cached-ask path against a running server.
++
++Setup:  pip install -r requirements-bench.txt
++Run:    uvicorn main:app   (in another terminal), then  python benchmarks/run_benchmarks.py
++Results are printed to the console only; none are saved in the repo.
++"""
+ import os
+ import time
+ import requests
+diff --git a/requirements-bench.txt b/requirements-bench.txt
+new file mode 100644
+index 0000000..76fc2bd
+--- /dev/null
++++ b/requirements-bench.txt
+@@ -0,0 +1,4 @@
++-r requirements.txt
++sentence-transformers
++faiss-cpu
++requests
+diff --git a/services/document_service.py b/services/document_service.py
+index 763d187..7339aad 100644
+--- a/services/document_service.py
++++ b/services/document_service.py
+@@ -30,13 +30,12 @@ def extract_text_from_txt(file_bytes: bytes) -> str:
+ 
+ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
+     """
+-    Simple fixed-size character chunking with overlap.
+-    
+-    Token optimization note:
+-    - chunk_size=500 chars ≈ ~125 tokens (GPT tokenizer: ~4 chars/token)
+-    - top_k=3 chunks → max ~375 tokens of context per query
+-    - Full doc could be 100k+ tokens; we only send ~375 — massive saving
+-    - In production: use tiktoken to chunk by actual token count, not chars
++    Fixed-size character chunking with overlap.
++
++    Each chunk is `chunk_size` characters; consecutive chunks share `overlap`
++    characters so a sentence cut at a boundary appears whole in the next chunk.
++    Limitation: this ignores sentence and paragraph boundaries. A token-aware
++    or recursive splitter would be a better next step.
+     """
+     chunks = []
+     start = 0
+diff --git a/services/llm_service.py b/services/llm_service.py
+index c3a6b54..ecd4fa0 100644
+--- a/services/llm_service.py
++++ b/services/llm_service.py
+@@ -83,7 +83,7 @@ def _mock_llm(question: str, chunks: List[Tuple[str, float]]) -> str:
+     return (
+         f"[MOCK ANSWER] Based on the document, here is a relevant excerpt: "
+         f'"{top_chunk[:200]}..." '
+-        f"(Set USE_MOCK_LLM=false and add OPENAI_API_KEY to use real LLM.)"
++        f"(Set USE_MOCK_LLM=false and add GROQ_API_KEY or OPENAI_API_KEY to use a real LLM.)"
+     )
+ 
+ 
+diff --git a/tests/test_api_smoke.py b/tests/test_api_smoke.py
+index 4207eff..40b2474 100644
+--- a/tests/test_api_smoke.py
++++ b/tests/test_api_smoke.py
+@@ -1,23 +1,3 @@
+-import sys
+-import types
+-
+-import numpy as np
+-
+-
+-class FakeSentenceTransformer:
+-    def __init__(self, model_name: str):
+-        self.model_name = model_name
+-
+-    def encode(self, texts, convert_to_numpy=True):
+-        return np.array(
+-            [[float(len(text) or 1), 1.0] for text in texts], dtype="float32"
+-        )
+-
+-
+-fake_sentence_transformers = types.ModuleType("sentence_transformers")
+-fake_sentence_transformers.SentenceTransformer = FakeSentenceTransformer
+-sys.modules["sentence_transformers"] = fake_sentence_transformers
+-
+ from fastapi.testclient import TestClient
+ 
+ from main import app
+@@ -36,7 +16,7 @@ def test_upload_and_ask_with_mock_llm(monkeypatch):
+         files={
+             "file": (
+                 "project.txt",
+-                b"The document project uses FastAPI and FAISS for retrieval.",
++                b"The document project uses FastAPI and scikit-learn for retrieval.",
+                 "text/plain",
+             )
+         },
+diff --git a/tests/test_core.py b/tests/test_core.py
+new file mode 100644
+index 0000000..a455b45
+--- /dev/null
++++ b/tests/test_core.py
+@@ -0,0 +1,48 @@
++import time
++
++import pytest
++
++from services.document_service import chunk_text
++from services.embedding_service import EmbeddingService
++from utils import cache
++
++
++def test_chunk_text_size_and_overlap():
++    text = "".join(str(i % 10) for i in range(1200))
++    chunks = chunk_text(text, chunk_size=500, overlap=50)
++    assert all(len(c) <= 500 for c in chunks)
++    # the last 50 chars of a chunk are the first 50 of the next one
++    assert chunks[0][-50:] == chunks[1][:50]
++    assert len(chunks) == 3
++
++
++def test_chunk_text_ignores_blank_input():
++    assert chunk_text("   \n  ") == []
++
++
++def test_retrieval_ranks_relevant_chunk_first():
++    service = EmbeddingService()
++    chunks = [
++        "Bananas are yellow fruit rich in potassium.",
++        "The server uses FastAPI and PostgreSQL for the backend API.",
++        "Mount Everest is the tallest mountain above sea level.",
++    ]
++    service.index_chunks("test-doc", chunks)
++    results = service.retrieve_top_k("test-doc", "Which backend database does the server use?", top_k=1)
++    texts = [text for text, score in results]
++    scores = {text: score for text, score in results}
++    assert chunks[1] in texts
++    # the matched chunk has the highest score; neighbours added for context score 0.0
++    assert scores[chunks[1]] == max(scores.values()) and scores[chunks[1]] > 0
++
++
++def test_retrieval_unknown_document_raises():
++    with pytest.raises(KeyError):
++        EmbeddingService().retrieve_top_k("missing-doc", "anything")
++
++
++def test_cache_expires_after_ttl():
++    cache.cache_set("k", "v", ttl=1)
++    assert cache.cache_get("k") == "v"
++    time.sleep(1.1)
++    assert cache.cache_get("k") is None

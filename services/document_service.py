@@ -30,13 +30,12 @@ def extract_text_from_txt(file_bytes: bytes) -> str:
 
 def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
     """
-    Simple fixed-size character chunking with overlap.
-    
-    Token optimization note:
-    - chunk_size=500 chars ≈ ~125 tokens (GPT tokenizer: ~4 chars/token)
-    - top_k=3 chunks → max ~375 tokens of context per query
-    - Full doc could be 100k+ tokens; we only send ~375 — massive saving
-    - In production: use tiktoken to chunk by actual token count, not chars
+    Fixed-size character chunking with overlap.
+
+    Each chunk is `chunk_size` characters; consecutive chunks share `overlap`
+    characters so a sentence cut at a boundary appears whole in the next chunk.
+    Limitation: this ignores sentence and paragraph boundaries. A token-aware
+    or recursive splitter would be a better next step.
     """
     chunks = []
     start = 0

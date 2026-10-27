@@ -83,7 +83,7 @@ def _mock_llm(question: str, chunks: List[Tuple[str, float]]) -> str:
     return (
         f"[MOCK ANSWER] Based on the document, here is a relevant excerpt: "
         f'"{top_chunk[:200]}..." '
-        f"(Set USE_MOCK_LLM=false and add OPENAI_API_KEY to use real LLM.)"
+        f"(Set USE_MOCK_LLM=false and add GROQ_API_KEY or OPENAI_API_KEY to use a real LLM.)"
     )
 
 

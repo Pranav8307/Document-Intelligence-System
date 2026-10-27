@@ -1,9 +1,9 @@
 # Deploy to Render
 
 This repository deploys as a FastAPI web service and a React static site. The
-included `Dockerfile` builds the embedding model into the API image. Deploy the
-API and frontend as two separate Render services; `render.yaml` is not needed
-for this manual workflow.
+`Dockerfile` installs the API with lightweight TF-IDF retrieval (no PyTorch or
+embedding model). The included `render.yaml` can create both services and a free
+PostgreSQL database; the manual steps below achieve the same result.
 
 ## Before deploying
 
@@ -24,8 +24,8 @@ for this manual workflow.
 3. Set the service name to `document-intelligence-api`.
 4. Set **Language/Runtime** to **Docker**.
 5. Set Dockerfile path to `./Dockerfile`.
-6. Choose the Free plan if available. The API may need more memory because it
-   loads PyTorch, FAISS, and SentenceTransformers.
+6. Choose the Free plan. The API fits the free memory tier because it uses
+   TF-IDF retrieval instead of PyTorch or SentenceTransformers.
 7. Add health check path `/health`.
 8. Create the service and wait for the Docker build to finish.
 
@@ -34,15 +34,14 @@ After deployment, copy the API URL and verify:
 - `https://<api-service>.onrender.com/health`
 - `https://<api-service>.onrender.com/docs`
 
-If the first Docker deploy fails with `AttributeError: _ARRAY_API not found`
-or `numpy.core.multiarray failed to import`, push the latest requirements file
-and redeploy. The project pins NumPy 1.26.4 because the selected FAISS version
-is not compatible with NumPy 2.x.
+History: the first deployed version used SentenceTransformers + FAISS. On the
+free tier it failed with a FAISS/NumPy compatibility error and then exceeded the
+memory limit (PyTorch + CUDA libraries), so retrieval was switched to TF-IDF on
+10 Sep 2026. If you see `numpy.core.multiarray failed to import`, check that
+`numpy==1.26.4` from `requirements.txt` is the version installed.
 
-If Render reports that the service exceeded its memory limit, make sure the
-latest Dockerfile and requirements file are deployed. The earlier image loaded
-PyTorch, CUDA libraries, and a sentence-transformer model; the current image
-uses lightweight TF-IDF retrieval instead.
+If Render reports that the service exceeded its memory limit, confirm the latest
+Dockerfile and `requirements.txt` are deployed.
 
 ## Create the frontend static site
 
@@ -103,7 +102,7 @@ Set these in the service's **Environment** tab. Mark API keys as secrets.
 | Variable | Example value |
 | --- | --- |
 | `USE_MOCK_LLM` | `false` |
-| `LLM_PROVIDER` | `openai` or `groq` |
+| `LLM_PROVIDER` | `groq` (as deployed) or `openai` |
 | `LLM_MODEL` | the model name from your AI provider |
 | `LLM_BASE_URL` | provider API base URL when required |
 | `OPENAI_API_KEY` | your OpenAI key when `LLM_PROVIDER=openai` |
@@ -135,10 +134,14 @@ Open `http://localhost:5173`. It uses `http://127.0.0.1:8000` by default. To
 use another API, create `frontend/.env.local` with
 `VITE_API_URL=https://your-api.onrender.com`.
 
-## Important current limitation
+## Persistence and limitations
 
-Documents, vectors, cached answers, and metrics are stored only in the running
-process. They disappear when the service restarts, redeploys, or scales beyond
-one instance. This is suitable for a single-instance demo, not durable product
-storage. A production version needs persistent object storage for uploaded files
-and a database/vector store for document text, embeddings, and cache data.
+If `DATABASE_URL` is set (the included `render.yaml` wires a Render PostgreSQL
+database), uploaded documents and chunks are stored in PostgreSQL and the TF-IDF
+indexes are rebuilt from them on startup. Without `DATABASE_URL`, everything is
+kept in process memory and disappears on restart.
+
+Always in memory (reset on restart, not shared across instances): the answer
+cache (5 minutes), the rate limiter, and the `/metrics` counters. There is no
+authentication or per-user isolation. This is suitable for a single-instance
+demo, not for sensitive documents.

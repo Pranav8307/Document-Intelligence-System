@@ -1,3 +1,14 @@
+"""
+LEGACY benchmark from the SentenceTransformers + FAISS version of this project.
+
+The deployed app now uses TF-IDF retrieval (see README, "Why TF-IDF"). This
+script still compares FAISS IndexFlatIP with NumPy brute force, and times the
+upload / first-ask / cached-ask path against a running server.
+
+Setup:  pip install -r requirements-bench.txt
+Run:    uvicorn main:app   (in another terminal), then  python benchmarks/run_benchmarks.py
+Results are printed to the console only; none are saved in the repo.
+"""
 import os
 import time
 import requests
