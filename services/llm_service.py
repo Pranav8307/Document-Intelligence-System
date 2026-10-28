@@ -90,15 +90,19 @@ def _mock_llm(question: str, chunks: List[Tuple[str, float]]) -> str:
 def _completion_options(provider: str, model: str, answer_length: str) -> dict:
     """Choose an output budget that leaves room for reasoning-model final text."""
     if provider == "groq":
-        options = {
+        provider_options = {
             "max_completion_tokens": 2048 if answer_length == "concise" else 4096
         }
         if model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}:
-            options.update(
+            provider_options.update(
                 reasoning_effort="low" if answer_length == "concise" else "medium",
                 include_reasoning=False,
             )
-        return options
+        # The repository pins openai==1.35.3, whose create() method does not
+        # recognize Groq's newer fields as named arguments. extra_body keeps
+        # those provider-specific fields in the JSON request body while using
+        # the pinned SDK version.
+        return {"extra_body": provider_options}
 
     return {"max_tokens": 800 if answer_length == "concise" else 4000}
 
