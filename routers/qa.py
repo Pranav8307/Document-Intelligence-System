@@ -20,6 +20,21 @@ def _resolve_retrieval_limit(answer_length: str, top_k: int | None) -> int:
     return DEFAULT_RETRIEVAL_LIMITS[answer_length]
 
 
+def _answer_cache_key(
+    document_id: str, question: str, answer_length: str, top_k: int
+) -> str:
+    return make_cache_key(
+        document_id,
+        f"v5-{answer_length}-{top_k}:{question}",
+    )
+
+
+def _cached_answer_details(cached) -> tuple[str, int]:
+    if isinstance(cached, dict):
+        return cached["answer"], cached.get("chunks_used", 0)
+    return cached, 0
+
+
 def _generate_answer(question: str, chunks, answer_length: str) -> str:
     try:
         return get_answer(question, chunks, answer_length)
@@ -49,9 +64,8 @@ async def ask_question(request: Request, body: AskRequest):
         )
 
     retrieval_limit = _resolve_retrieval_limit(body.answer_length, body.top_k)
-    cache_key = make_cache_key(
-        body.document_id,
-        f"v4-{body.answer_length}-{retrieval_limit}:{body.question}",
+    cache_key = _answer_cache_key(
+        body.document_id, body.question, body.answer_length, retrieval_limit
     )
     cached = cache_get(cache_key)
 
@@ -61,12 +75,13 @@ async def ask_question(request: Request, body: AskRequest):
         metrics_store.record_timing(
             "qa_request_total", (time.perf_counter() - request_start) * 1000
         )
+        cached_answer, cached_chunks_used = _cached_answer_details(cached)
         return APIResponse(
             status="success",
             message="Answer retrieved from cache.",
             data=AskResponse(
-                answer=cached,
-                chunks_used=body.top_k,
+                answer=cached_answer,
+                chunks_used=cached_chunks_used,
                 cached=True,
                 document_id=body.document_id,
             ),
@@ -89,7 +104,7 @@ async def ask_question(request: Request, body: AskRequest):
     )
 
     answer = _generate_answer(body.question, chunks, body.answer_length)
-    cache_set(cache_key, answer)
+    cache_set(cache_key, {"answer": answer, "chunks_used": len(chunks)})
     metrics_store.increment("answers_generated")
     metrics_store.record_timing(
         "qa_request_total", (time.perf_counter() - request_start) * 1000

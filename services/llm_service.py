@@ -87,6 +87,22 @@ def _mock_llm(question: str, chunks: List[Tuple[str, float]]) -> str:
     )
 
 
+def _completion_options(provider: str, model: str, answer_length: str) -> dict:
+    """Choose an output budget that leaves room for reasoning-model final text."""
+    if provider == "groq":
+        options = {
+            "max_completion_tokens": 2048 if answer_length == "concise" else 4096
+        }
+        if model in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}:
+            options.update(
+                reasoning_effort="low" if answer_length == "concise" else "medium",
+                include_reasoning=False,
+            )
+        return options
+
+    return {"max_tokens": 800 if answer_length == "concise" else 4000}
+
+
 def _call_openai(prompt: str, answer_length: str = "detailed") -> str:
     _, provider, model, base_url = _get_config()
     api_key = _get_api_key(provider)
@@ -104,10 +120,22 @@ def _call_openai(prompt: str, answer_length: str = "detailed") -> str:
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        max_tokens=800 if answer_length == "concise" else 4000,
         temperature=0.2,
+        **_completion_options(provider, model, answer_length),
     )
-    content = response.choices[0].message.content
+    choices = getattr(response, "choices", None) or []
+    content = choices[0].message.content if choices else None
     if not content or not content.strip():
-        raise ValueError("The LLM returned an empty answer. Please try again.")
+        finish_reason = choices[0].finish_reason if choices else "no_choice"
+        logger.warning(
+            "LLM returned empty content | provider=%s model=%s answer_length=%s finish_reason=%s",
+            provider,
+            model,
+            answer_length,
+            finish_reason,
+        )
+        raise ValueError(
+            "The LLM returned no visible answer. Please retry; the response may have "
+            "used its output budget before producing an answer."
+        )
     return content.strip()
