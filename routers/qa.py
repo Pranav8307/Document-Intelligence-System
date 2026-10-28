@@ -11,6 +11,30 @@ from utils.rate_limiter import limiter
 logger = get_logger(__name__)
 router = APIRouter()
 
+DEFAULT_RETRIEVAL_LIMITS = {"concise": 8, "detailed": 20}
+
+
+def _resolve_retrieval_limit(answer_length: str, top_k: int | None) -> int:
+    if top_k is not None:
+        return top_k
+    return DEFAULT_RETRIEVAL_LIMITS[answer_length]
+
+
+def _generate_answer(question: str, chunks, answer_length: str) -> str:
+    try:
+        return get_answer(question, chunks, answer_length)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Answer generation failed")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "The answer service could not complete this request. "
+                "Try concise mode or a smaller document."
+            ),
+        ) from exc
+
 
 @router.post("/ask", response_model=APIResponse)
 @limiter.limit("10/minute")
@@ -24,7 +48,7 @@ async def ask_question(request: Request, body: AskRequest):
             detail=f"Document '{body.document_id}' not found. Upload it first.",
         )
 
-    retrieval_limit = body.top_k or (50 if body.answer_length == "detailed" else 8)
+    retrieval_limit = _resolve_retrieval_limit(body.answer_length, body.top_k)
     cache_key = make_cache_key(
         body.document_id,
         f"v4-{body.answer_length}-{retrieval_limit}:{body.question}",
@@ -64,10 +88,7 @@ async def ask_question(request: Request, body: AskRequest):
         f"Retrieved {len(chunks)} chunks for question: '{body.question[:60]}...'"
     )
 
-    try:
-        answer = get_answer(body.question, chunks, body.answer_length)
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+    answer = _generate_answer(body.question, chunks, body.answer_length)
     cache_set(cache_key, answer)
     metrics_store.increment("answers_generated")
     metrics_store.record_timing(

@@ -21,10 +21,10 @@ I built it to understand how a RAG (retrieval-augmented generation) pipeline wor
 
 | Mode | Retrieval limit | Output |
 |---|---|---|
-| `detailed` (default) | up to 50 chunks | thorough answer. For small documents this is effectively the whole document |
+| `detailed` (default) | up to 20 matching chunks, plus neighbors | thorough answer with a bounded amount of context |
 | `concise` | 8 chunks | 3 to 6 bullets or short paragraphs |
 
-`top_k` (1 to 50) overrides the limit. Be aware that in `detailed` mode retrieval does little filtering on small files; it matters most for long documents and for `concise` mode.
+`top_k` (1 to 50) overrides the limit. The default keeps detailed requests small enough for reliable generation while still returning surrounding chunks for context.
 
 ---
 

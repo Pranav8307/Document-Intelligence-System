@@ -24,7 +24,7 @@ class AskRequest(BaseModel):
         default=None,
         ge=1,
         le=50,
-        description="Optional retrieval limit; detailed mode uses the full document by default",
+        description="Optional retrieval limit; detailed mode retrieves more context by default",
     )
 
 
