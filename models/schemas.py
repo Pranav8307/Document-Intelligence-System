@@ -23,8 +23,8 @@ class AskRequest(BaseModel):
     top_k: int | None = Field(
         default=None,
         ge=1,
-        le=50,
-        description="Optional retrieval limit; detailed mode retrieves more context by default",
+        le=12,
+        description="Optional retrieval limit (1–12); omitted requests adapt between 4 and 12 matches",
     )
 
 

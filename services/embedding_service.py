@@ -1,3 +1,4 @@
+import re
 import time
 from typing import List, Tuple
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -10,6 +11,35 @@ logger = get_logger(__name__)
 
 # Lightweight index store: document_id -> (vectorizer, matrix, chunks)
 _indexes: dict[str, tuple] = {}
+
+
+def expand_question_terms(question: str) -> str:
+    """Add lightweight lexical hints for common question words removed as stop words."""
+    normalized = question.casefold()
+    hints = []
+    if re.search(r"\bwhere\b", normalized):
+        hints.extend(
+            [
+                "location",
+                "place",
+                "address",
+                "room",
+                "city",
+                "country",
+                "stored",
+                "located",
+                "site",
+            ]
+        )
+    if re.search(r"\bwho\b", normalized):
+        hints.extend(["person", "name", "author", "owner", "manager", "founder"])
+    if re.search(r"\bwhen\b", normalized):
+        hints.extend(["date", "time", "year", "month", "period"])
+    if re.search(r"\bhow many\b|\bhow much\b|\bcount\b", normalized):
+        hints.extend(["count", "number", "total", "quantity", "amount"])
+    if re.search(r"\bhow long\b", normalized):
+        hints.extend(["duration", "days", "months", "years", "time"])
+    return f"{question} {' '.join(hints)}" if hints else question
 
 
 class EmbeddingService:
@@ -40,7 +70,7 @@ class EmbeddingService:
 
         vectorizer, matrix, chunks = _indexes[document_id]
         encode_start = time.perf_counter()
-        query_vec = vectorizer.transform([question])
+        query_vec = vectorizer.transform([expand_question_terms(question)])
         metrics_store.record_timing(
             "embedding_encode", (time.perf_counter() - encode_start) * 1000
         )

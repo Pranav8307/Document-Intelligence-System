@@ -1,5 +1,6 @@
 import time
 from fastapi import APIRouter, HTTPException, Request
+from openai import RateLimitError
 from models.schemas import APIResponse, AskRequest, AskResponse
 from services.document_service import document_exists, embedding_service
 from services.llm_service import get_answer
@@ -11,12 +12,14 @@ from utils.rate_limiter import limiter
 logger = get_logger(__name__)
 router = APIRouter()
 
-DEFAULT_RETRIEVAL_LIMITS = {"concise": 8, "detailed": 20}
+DEFAULT_RETRIEVAL_LIMITS = {"concise": 8, "detailed": 8}
+MIN_SAFE_RETRIEVAL_LIMIT = 4
+MAX_ADAPTIVE_RETRIEVAL_LIMIT = 12
 
 
 def _resolve_retrieval_limit(answer_length: str, top_k: int | None) -> int:
     if top_k is not None:
-        return top_k
+        return min(top_k, MAX_ADAPTIVE_RETRIEVAL_LIMIT)
     return DEFAULT_RETRIEVAL_LIMITS[answer_length]
 
 
@@ -25,7 +28,7 @@ def _answer_cache_key(
 ) -> str:
     return make_cache_key(
         document_id,
-        f"v5-{answer_length}-{top_k}:{question}",
+        f"v6-{answer_length}-{top_k}:{question}",
     )
 
 
@@ -38,6 +41,16 @@ def _cached_answer_details(cached) -> tuple[str, int]:
 def _generate_answer(question: str, chunks, answer_length: str) -> str:
     try:
         return get_answer(question, chunks, answer_length)
+    except RateLimitError as exc:
+        provider_error = str(exc).casefold()
+        if "tokens per day" in provider_error or "(tpd)" in provider_error:
+            detail = (
+                "The LLM provider's daily token quota is exhausted. "
+                "Wait for it to reset, then try again."
+            )
+        else:
+            detail = "The LLM provider is rate-limiting requests. Please wait and retry."
+        raise HTTPException(status_code=429, detail=detail) from exc
     except ValueError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:
@@ -49,6 +62,67 @@ def _generate_answer(question: str, chunks, answer_length: str) -> str:
                 "Try concise mode or a smaller document."
             ),
         ) from exc
+
+
+def _needs_more_context(answer: str) -> bool:
+    return "i don't have enough information to answer that" in answer.casefold()
+
+
+def _retrieve_chunks(document_id: str, question: str, top_k: int):
+    try:
+        chunks = embedding_service.retrieve_top_k(document_id, question, top_k=top_k)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not chunks:
+        raise HTTPException(status_code=422, detail="No relevant chunks found.")
+    return chunks
+
+
+def _generate_answer_adaptively(
+    question: str,
+    chunks,
+    answer_length: str,
+    retrieval_limit: int,
+    can_adapt: bool,
+    retrieve_at_limit,
+):
+    try:
+        answer = _generate_answer(question, chunks, answer_length)
+    except HTTPException as initial_error:
+        if (
+            initial_error.status_code == 429
+            or not can_adapt
+            or retrieval_limit <= MIN_SAFE_RETRIEVAL_LIMIT
+        ):
+            raise
+        fallback_chunks = retrieve_at_limit(MIN_SAFE_RETRIEVAL_LIMIT)
+        if fallback_chunks == chunks:
+            raise initial_error
+        return (
+            _generate_answer(question, fallback_chunks, answer_length),
+            fallback_chunks,
+        )
+
+    if (
+        can_adapt
+        and retrieval_limit < MAX_ADAPTIVE_RETRIEVAL_LIMIT
+        and _needs_more_context(answer)
+    ):
+        wider_chunks = retrieve_at_limit(MAX_ADAPTIVE_RETRIEVAL_LIMIT)
+        if wider_chunks == chunks:
+            return answer, chunks
+        try:
+            wider_answer = _generate_answer(question, wider_chunks, answer_length)
+        except HTTPException as retry_error:
+            if retry_error.status_code == 429:
+                raise
+            logger.warning(
+                "Wider-context retry failed; returning the initial grounded response."
+            )
+        else:
+            return wider_answer, wider_chunks
+
+    return answer, chunks
 
 
 @router.post("/ask", response_model=APIResponse)
@@ -89,21 +163,23 @@ async def ask_question(request: Request, body: AskRequest):
 
     metrics_store.increment("cache_misses")
 
-    try:
-        chunks = embedding_service.retrieve_top_k(
-            body.document_id, body.question, top_k=retrieval_limit
-        )
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
-    if not chunks:
-        raise HTTPException(status_code=422, detail="No relevant chunks found.")
+    retrieve_at_limit = lambda limit: _retrieve_chunks(
+        body.document_id, body.question, limit
+    )
+    chunks = retrieve_at_limit(retrieval_limit)
 
     logger.info(
         f"Retrieved {len(chunks)} chunks for question: '{body.question[:60]}...'"
     )
 
-    answer = _generate_answer(body.question, chunks, body.answer_length)
+    answer, chunks = _generate_answer_adaptively(
+        body.question,
+        chunks,
+        body.answer_length,
+        retrieval_limit,
+        can_adapt=body.top_k is None,
+        retrieve_at_limit=retrieve_at_limit,
+    )
     cache_set(cache_key, {"answer": answer, "chunks_used": len(chunks)})
     metrics_store.increment("answers_generated")
     metrics_store.record_timing(
