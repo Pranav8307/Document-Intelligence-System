@@ -66,7 +66,9 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ document_id: document.document_id, question, answer_length: answerLength }),
       });
-      setAnswer(payload.data);
+      // Keep the mode attached to this answer so changing the selector does
+      // not make an older answer appear to have been generated in the new mode.
+      setAnswer({ ...payload.data, answer_length: answerLength });
       await refreshMetrics(setMetrics);
     } catch (questionError) {
       setError(questionError.message);
@@ -124,11 +126,11 @@ function App() {
 
       {answer && <section className="answer-panel">
         <div className="answer-heading">
-          <div><p className="eyebrow">Document response</p><h2>Answer</h2></div>
-          <div className="answer-meta">{answer.cached && <span>Cached</span>}<span>{answer.chunks_used} source chunks</span></div>
+          <div><p className="eyebrow">Document response</p><h2>{answer.answer_length === "concise" ? "Concise answer" : "Detailed answer"}</h2></div>
+          <div className="answer-meta"><span>{answer.cached ? "Cached · " : ""}{answer.chunks_used} retrieved chunks</span></div>
         </div>
         <div className="answer-content"><ReactMarkdown>{answer.answer}</ReactMarkdown></div>
-        <footer className="answer-footer">Full document context used</footer>
+        <footer className="answer-footer">Answer generated from retrieved document passages</footer>
       </section>}
 
       <section className="bottom-row">
