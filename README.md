@@ -13,7 +13,7 @@ I built it to understand how a RAG (retrieval-augmented generation) pipeline wor
 1. **Upload** a PDF or TXT file (max 10 MB). Text is extracted with PyMuPDF.
 2. **Chunk** the text into 500-character pieces with 50 characters of overlap, so a sentence cut at a boundary still appears whole in the neighbouring chunk.
 3. **Index** the chunks with TF-IDF (scikit-learn, unigrams + bigrams, English stop words).
-4. **Retrieve** the best-matching chunks for a question by cosine similarity, plus each match's two neighbouring chunks.
+4. **Retrieve** the best-matching chunks for a question by cosine similarity, plus neighbouring chunks. Common question words such as “where”, “who”, and “when” add lightweight search hints so stop-word removal does not discard the question type.
 5. **Generate** an answer with an LLM (Groq in the deployed version), with a prompt that tells the model to answer only from the retrieved context and to say so when the answer is not there.
 6. **Cache** the answer for 5 minutes (in memory), so a repeated question skips retrieval and the LLM call.
 
@@ -21,10 +21,10 @@ I built it to understand how a RAG (retrieval-augmented generation) pipeline wor
 
 | Mode | Retrieval limit | Output |
 |---|---|---|
-| `detailed` (default) | up to 20 matching chunks, plus neighbors | thorough answer with a bounded amount of context |
-| `concise` | 8 chunks | 3 to 6 bullets or short paragraphs |
+| `detailed` (default) | starts at 8 matches, plus neighbors | thorough answer with a bounded amount of context |
+| `concise` | starts at 8 matches, plus neighbors | 3 to 6 bullets or short paragraphs |
 
-`top_k` (1 to 50) overrides the limit. The default keeps detailed requests small enough for reliable generation while still returning surrounding chunks for context.
+Neighboring chunks are included to preserve context. When `top_k` is omitted, a request starts with 8 matches. If the model says the answer is missing, the API retries with 12; if generation fails with the larger context, it retries with 4. An explicit `top_k` (1 to 12) disables these retries.
 
 ---
 
